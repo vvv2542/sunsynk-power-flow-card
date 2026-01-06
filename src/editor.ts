@@ -14,6 +14,7 @@ import {
 import { customElement, property } from 'lit/decorators.js';
 import { localize } from './localize/localize';
 import { capitalize } from 'lodash';
+import defaults from './defaults';
 import { EDITOR_NAME, SensorDeviceClass } from './const';
 import { LovelaceConfig } from 'custom-card-helpers/src/types';
 
@@ -151,6 +152,14 @@ export class SunSynkCardEditor
 				return 'Show the Aux subsection (separate auxiliary load configuration).';
 			case 'label_daily_load':
 				return 'Alternate label for the daily load value displayed under Load.';
+			case 'label_daily_chrg':
+				return 'Alternate label for the daily charge value displayed under Battery.';
+			case 'label_daily_dischrg':
+				return 'Alternate label for the daily discharge value displayed under Battery.';
+			case 'label_autarky':
+				return 'Alternate label for the autarky value displayed under Inverter.';
+			case 'label_ratio':
+				return 'Alternat label for the ratio value displayed under Inverter.';
 			case 'navigate':
 				return 'Optional navigation path to open when the icon is clicked.';
 			case 'import_icon':
@@ -495,6 +504,7 @@ export class SunSynkCardEditor
 		};
 		visit(clone);
 		this._config = {
+			...defaults,
 			...this._config,
 			...(clone as unknown as sunsynkPowerFlowCardConfig),
 		};
@@ -625,6 +635,8 @@ export class SunSynkCardEditor
 									},
 									{ name: 'colour', selector: { color_rgb: {} } },
 									{ name: 'navigate', selector: { text: {} } },
+									{ name: 'label_autarky', selector: { text: {} } },
+									{ name: 'label_ratio', selector: { text: {} } },
 								],
 							},
 						],
@@ -716,6 +728,8 @@ export class SunSynkCardEditor
 												{ name: 'animation_speed', selector: { number: {} } },
 												{ name: 'max_power', selector: { number: {} } },
 												{ name: 'path_threshold', selector: { number: {} } },
+												{ name: 'label_daily_chrg', selector: { text: {} } },
+												{ name: 'label_daily_dischrg', selector: { text: {} } },
 											],
 										},
 										{

@@ -3,11 +3,10 @@ Sigenergy Sigenstor with Gateway
 #################
 
 .. note::
-   The sensors utilised below are provided by the 'Sigenergy Local Modbus' integration, maintained at: https://github.com/TypQxQ/Sigenergy-Local-Modbus
-   If there is enough interest for a version using the MQTT version, maintained at: https://github.com/seud0nym/sigenergy2mqtt, I will see about adding.
+   The sensors utilised below are provided by the `Sigenergy Local Modbus <https://github.com/TypQxQ/Sigenergy-Local-Modbus>`__ integration.
+   If there is enough interest for an example config using `sigenergy2mqtt <https://github.com/seud0nym/sigenergy2mqtt>`__, I will see about adding one.
 
 ______________________________________________________________
-
 
 *****************************
 Minimal Configuration (Solar and Battery)
@@ -131,7 +130,7 @@ Minimal Configuration (Solar and Battery)
     essential_load3: none                                                     # Update with an essential load power sensor
     essential_load3_extra: none                                               # Update with an essential load energy or other sensor
     essential_load4: none                                                     # Update with an essential load power sensor
-    essential_load5_extra: none                                               # Update with an essential load energy or other sensor
+    essential_load4_extra: none                                               # Update with an essential load energy or other sensor
     essential_load5: none                                                     # Update with an essential load power sensor
     essential_load5_extra: none                                               # Update with an essential load energy or other sensor
     essential_load6: none                                                     # Update with an essential load power sensor

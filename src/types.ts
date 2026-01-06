@@ -10,6 +10,7 @@ declare global {
 export enum InverterModel {
 	Azzurro = 'azzurro',
 	CESBatteryBox = 'ces-battery-box',
+	Chisage = 'chisage',
 	Deye = 'deye',
 	DeyeNew = 'deye-new',
 	E3dc = 'e3dc',
@@ -33,6 +34,7 @@ export enum InverterModel {
 	Solax = 'solax',
 	Solis = 'solis',
 	Solinteg = 'solinteg',
+	SRNEHES = 'srne-hes',
 	Sungrow = 'sungrow',
 	Sunsynk = 'sunsynk',
 	Victron = 'victron',
@@ -74,6 +76,8 @@ export interface sunsynkPowerFlowCardConfig extends LovelaceCardConfig {
 		auto_scale: boolean;
 		three_phase: boolean;
 		navigate: string;
+		label_autarky: string;
+		label_ratio: string;
 	};
 	battery: {
 		count: number;
@@ -101,6 +105,8 @@ export interface sunsynkPowerFlowCardConfig extends LovelaceCardConfig {
 		navigate: string;
 		invert_flow: boolean;
 		soc_decimal_places?: number;
+		label_daily_chrg: string;
+		label_daily_dischrg: string;
 	};
 	battery2: {
 		energy: any;
