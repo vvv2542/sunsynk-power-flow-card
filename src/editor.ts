@@ -27,6 +27,149 @@ export class SunSynkCardEditor
 	@property() private _config!: sunsynkPowerFlowCardConfig;
 	@property() lovelace?: LovelaceConfig;
 
+	// Cache for performance
+	private _cachedSanitizedConfig?: sunsynkPowerFlowCardConfig;
+	private _configVersion = 0;
+	private _lastCachedVersion = -1;
+
+	private static readonly _labelCache = new Map<string, string>();
+
+	// Static color name mapping (avoid recreating on every call)
+	private static readonly COLOR_NAME_MAP: Record<string, string> = {
+		grey: '#9e9e9e',
+		gray: '#9e9e9e',
+		pink: '#ffc0cb',
+		orange: '#ffa500',
+		red: '#ff0000',
+		green: '#008000',
+		blue: '#0000ff',
+		yellow: '#ffff00',
+		purple: '#800080',
+		black: '#000000',
+		white: '#ffffff',
+	};
+
+	// Precompiled regex patterns for helper text matching (avoid recreating on every call)
+	private static readonly PATTERN_LOAD_NAME = /^load\d+_name$/;
+	private static readonly PATTERN_LOAD_ICON = /^load\d+_icon$/;
+	private static readonly PATTERN_LOAD_SWITCH = /^load\d+_switch$/;
+	private static readonly PATTERN_LOAD_THRESHOLD = /^load\d+_max_threshold$/;
+	private static readonly PATTERN_AUX_LOAD_NAME = /^aux_load\d+_name$/;
+	private static readonly PATTERN_AUX_LOAD_ICON = /^aux_load\d+_icon$/;
+	private static readonly PATTERN_PV_NAME = /^pv[1-6]_name$/;
+	private static readonly PATTERN_SHOW_SECTION =
+		/^show_(inverter|battery|battery2|solar|load|grid)$/;
+	private static readonly PATTERN_SHOW_DAILY = /^show_daily(_.*)?$/;
+	private static readonly PATTERN_ANY_NAME = /^.*_name$/;
+	private static readonly PATTERN_DYNAMIC_ICON = /dynamic_icon$/;
+	private static readonly PATTERN_ANY_SWITCH = /^.*_switch$/;
+	private static readonly PATTERN_MAX_THRESHOLD = /^.*_max_threshold$/;
+	private static readonly PATTERN_DYNAMIC_COLOUR = /dynamic_colour$/;
+	private static readonly PATTERN_ANY_COLOUR = /^.*_colour$/;
+	private static readonly PATTERN_OFF_COLOUR = /^.*_off_colour$/;
+	private static readonly PATTERN_MAX_POWER = /^.*_max_power$/;
+
+	// Precompiled regex for color normalization
+	private static readonly PATTERN_COLOUR_SUFFIX = /colour$/i;
+	private static readonly PATTERN_DYNAMIC_COLOUR_SUFFIX = /dynamic_colour$/i;
+
+	// Static lookup for help text (faster than switch-case)
+	private static readonly HELP_TEXT: Record<string, string> = {
+		large_font: 'Use a larger font for card entities.',
+		wide: 'Use a wide layout for the card.',
+		additional_loads: 'Number of additional loads to configure (0–6).',
+		colour: 'Primary colour for this element.',
+		efficiency:
+			'Show the effeciency of the mppts strings based on their max power.',
+		display_mode:
+			'Chose how to display solar information next to the sun icon.',
+		custom_label: 'Custom label shown in the UI.',
+		label_daily_grid_buy: 'Label for daily grid buy.',
+		label_daily_grid_sell: 'Label for daily grid sell.',
+		count: 'Number of batteries to display.',
+		energy: 'Total available energy of the battery in Wh.',
+		shutdown_soc: 'State of charge below which the battery is considered off.',
+		shutdown_soc_offgrid:
+			'State of charge below which the battery is considered off when off-grid.',
+		soc_end_of_charge:
+			'State of charge at which the battery is considered fully charged.',
+		invert_power: 'Invert the direction of power flow animation.',
+		hide_soc: 'Hide additional current program capacity (SOC) or shutdown SOC.',
+		show_absolute: 'Show absolute values for power.',
+		show_remaining_energy: 'Show remaining energy of the battery.',
+		remaining_energy_to_shutdown:
+			'Show remaining energy of the battery until it shuts down.',
+		invert_flow: 'Invert the direction of power flow.',
+		linear_gradient: 'Display battery SOC as a linear gradient.',
+		invert_load:
+			'Set to true if your sensor provides a negative number when the load is drawing power',
+		modern: 'Change inverter icon.',
+		invert_grid:
+			'Enable if your sensor provides a negative number for grid import and positive number for grid export.',
+		aux_loads: 'Number of auxiliary loads to configure (0–2).',
+		show_nonessential: 'Show non-essential loads.',
+		show_aux:
+			'Show the Aux subsection (separate auxiliary load configuration).',
+		label_daily_load:
+			'Alternate label for the daily load value displayed under Load.',
+		label_daily_chrg:
+			'Alternate label for the daily charge value displayed under Battery.',
+		label_daily_dischrg:
+			'Alternate label for the daily discharge value displayed under Battery.',
+		label_autarky:
+			'Alternate label for the autarky value displayed under Inverter.',
+		label_ratio: 'Alternat label for the ratio value displayed under Inverter.',
+		navigate: 'Optional navigation path to open when the icon is clicked.',
+		import_icon:
+			'Icon shown for the import flow. Can be set using a template sensor.',
+		export_icon:
+			'Icon shown for the export flow. Can be set using a template sensor.',
+		disconnected_icon:
+			'Icon shown when the grid is disconnected. Can be set using a template sensor.',
+		aux_name: 'Aux group title shown in the UI.',
+		aux_daily_name: 'Label used for daily Aux value.',
+		aux_type: 'Icon shown for the Aux group.',
+		invert_aux: 'Invert the direction of Aux flow arrows.',
+		show_absolute_aux: 'Show Aux values as absolute (no sign) for clarity.',
+		aux_dynamic_colour:
+			'Aux elements on the card will be greyed out if aux power is 0.',
+		aux_colour: 'Primary colour for Aux flow.',
+		aux_off_colour: 'Colour used when Aux path is off/idle.',
+		show_daily_aux: 'Display daily Aux energy beneath the Aux section.',
+		decimal_places: 'Number of decimal places for power values (0-3).',
+		decimal_places_energy: 'Number of decimal places for energy values (0-3).',
+		soc_decimal_places: 'Decimal places for State of Charge display (0-3).',
+		dynamic_line_width:
+			'Animate line widths based on power level. Disable for a flatter look.',
+		animation_speed: 'Adjusts the speed of flow animations. Higher = faster.',
+		off_threshold: 'Below this power value the path is considered off/idle.',
+		path_threshold:
+			'The colour of the path will change to the source colour if the percentage supply by a single source equals or exceeds this value.',
+		max_power: 'Optional cap used for scaling and progress calculations.',
+		title_size: "CSS font-size for title, e.g. '1.2em' or '18px'.",
+		card_height:
+			'Card height: text value (e.g. 360) or an entity providing a numeric height.',
+		card_width:
+			'Card width: text value (e.g. 640) or an entity providing a numeric width.',
+		center_no_grid:
+			'When Grid is hidden, shift and narrow the view to center Solar/Battery/Loads.',
+	};
+
+	// Utility: Parse unknown to finite number
+	private static _toFiniteNum(x: unknown): number | undefined {
+		if (typeof x === 'number' && Number.isFinite(x)) return x;
+		if (typeof x === 'string' && x.trim() !== '') {
+			const n = Number(x);
+			return Number.isFinite(n) ? n : undefined;
+		}
+		return undefined;
+	}
+
+	// Utility: Clamp to 0-255 range
+	private static _clamp255(n: number): number {
+		return Math.max(0, Math.min(255, Math.round(n)));
+	}
+
 	static get styles() {
 		return css`
 			:host {
@@ -48,6 +191,9 @@ export class SunSynkCardEditor
 		if (!data || typeof data !== 'object') return undefined;
 		const name = (data as { name?: string }).name;
 		if (!name) return undefined;
+
+		/*
+		// Localization (commented out until help text is added to language files)
 		const key = `config.helper.${name}`;
 		try {
 			const localized = localize(key);
@@ -55,183 +201,76 @@ export class SunSynkCardEditor
 		} catch {
 			// fall through to defaults below when localization lookup fails
 		}
+		*/
 
 		// Pattern-based helper hints for dynamic load/aux subfields
-		if (/^load\d+_name$/.test(name)) return 'Label for additional load.';
-		if (/^load\d+_icon$/.test(name))
+		if (SunSynkCardEditor.PATTERN_LOAD_NAME.test(name))
+			return 'Label for additional load.';
+		if (SunSynkCardEditor.PATTERN_LOAD_ICON.test(name))
 			return 'Additional load icon (Can be set via template sensor).';
-		if (/^load\d+_switch$/.test(name))
+		if (SunSynkCardEditor.PATTERN_LOAD_SWITCH.test(name))
 			return 'Switch entity to control this additional load (optional).';
-		if (/^load\d+_max_threshold$/.test(name))
+		if (SunSynkCardEditor.PATTERN_LOAD_THRESHOLD.test(name))
 			return 'Set the threshold that will activate the Max Colour.';
-		if (/^aux_load\d+_name$/.test(name)) return 'Label for auxiliary load.';
-		if (/^aux_load\d+_icon$/.test(name))
+		if (SunSynkCardEditor.PATTERN_AUX_LOAD_NAME.test(name))
+			return 'Label for auxiliary load.';
+		if (SunSynkCardEditor.PATTERN_AUX_LOAD_ICON.test(name))
 			return 'Icon will be used for this auxiliary load.';
 
 		// Global patterns across sections (safe and generic)
-		if (/^pv[1-6]_name$/.test(name)) return 'Custom label for a PV input.';
-		if (/^mppts$/.test(name))
+		if (SunSynkCardEditor.PATTERN_PV_NAME.test(name))
+			return 'Custom label for a PV input.';
+		if (name === 'mppts')
 			return 'Number of MPPT inputs available on your inverter.';
-		if (/^three_phase$/.test(name))
+		if (name === 'three_phase')
 			return 'Enable if your system/card should display in three-phase mode.';
-		if (/^show_(inverter|battery|battery2|solar|load|grid)$/.test(name))
+		if (SunSynkCardEditor.PATTERN_SHOW_SECTION.test(name))
 			return 'Show or hide this section in the card.';
-		if (/^show_daily(_.*)?$/.test(name))
+		if (SunSynkCardEditor.PATTERN_SHOW_DAILY.test(name))
 			return 'Display daily energy on the card.';
-		if (/^auto_scale$/.test(name))
+		if (name === 'auto_scale')
 			return 'Automatically scale values based on recent ranges.';
-		if (/^.*_name$/.test(name)) return 'Custom label shown in the UI.';
-		if (/dynamic_icon$/.test(name))
+		if (SunSynkCardEditor.PATTERN_ANY_NAME.test(name))
+			return 'Custom label shown in the UI.';
+		if (SunSynkCardEditor.PATTERN_DYNAMIC_ICON.test(name))
 			return 'The icon will change to represent power source.';
-		if (/^.*_switch$/.test(name))
+		if (SunSynkCardEditor.PATTERN_ANY_SWITCH.test(name))
 			return 'Optional switch entity to control this element.';
-		if (/^.*_max_threshold$/.test(name))
+		if (SunSynkCardEditor.PATTERN_MAX_THRESHOLD.test(name))
 			return 'Maximum threshold used for progress/flow scaling.';
 		// Must come before the generic *_colour rule; match both 'dynamic_colour' and '*_dynamic_colour'
-		if (/dynamic_colour$/.test(name))
+		if (SunSynkCardEditor.PATTERN_DYNAMIC_COLOUR.test(name))
 			return 'Change colour dynamically based on power level.';
-		if (/^.*_colour$/.test(name)) return 'Primary colour for this element.';
-		if (/^.*_off_colour$/.test(name))
+		if (SunSynkCardEditor.PATTERN_ANY_COLOUR.test(name))
+			return 'Primary colour for this element.';
+		if (SunSynkCardEditor.PATTERN_OFF_COLOUR.test(name))
 			return 'Colour used when the element is off/idle.';
-		if (/^.*_max_power$/.test(name))
+		if (SunSynkCardEditor.PATTERN_MAX_POWER.test(name))
 			return 'Optional cap used for scaling and progress calculations.';
-		switch (name) {
-			case 'large_font':
-				return 'Use a larger font for card entities.';
-			case 'wide':
-				return 'Use a wide layout for the card.';
-			case 'additional_loads':
-				return 'Number of additional loads to configure (0–6).';
-			case 'colour':
-				return 'Primary colour for this element.';
-			case 'efficiency':
-				return 'Show the effeciency of the mppts strings based on their max power.';
-			case 'display_mode':
-				return 'Chose how to display solar information next to the sun icon.';
-			case 'custom_label':
-				return 'Custom label shown in the UI.';
-			case 'label_daily_grid_buy':
-				return 'Label for daily grid buy.';
-			case 'label_daily_grid_sell':
-				return 'Label for daily grid sell.';
-			case 'count	':
-				return 'Number of batteries to display.';
-			case 'energy':
-				return 'Total available energy of the battery in Wh.';
-			case 'shutdown_soc':
-				return 'State of charge below which the battery is considered off.';
-			case 'shutdown_soc_offgrid':
-				return 'State of charge below which the battery is considered off when off-grid.';
-			case 'soc_end_of_charge':
-				return 'State of charge at which the battery is considered fully charged.';
-			case 'invert_power':
-				return 'Invert the direction of power flow animation.';
-			case 'hide_soc':
-				return 'Hide additional current program capacity (SOC) or shutdown SOC.';
-			case 'show_absolute':
-				return 'Show absolute values for power.';
-			case 'show_remaining_energy':
-				return 'Show remaining energy of the battery.';
-			case 'remaining_energy_to_shutdown':
-				return 'Show remaining energy of the battery until it shuts down.';
-			case 'invert_flow':
-				return 'Invert the direction of power flow.';
-			case 'linear_gradient':
-				return 'Display battery SOC as a linear gradient.';
-			case 'invert_load':
-				return 'Set to true if your sensor provides a negative number when the load is drawing power';
-			case 'modern':
-				return 'Change inverter icon.';
-			case 'invert_grid':
-				return 'Enable if your sensor provides a negative number for grid import and positive number for grid export.';
-			case 'aux_loads':
-				return 'Number of auxiliary loads to configure (0–2).';
-			case 'show_nonessential':
-				return 'Show non-essential loads.';
-			case 'show_aux':
-				return 'Show the Aux subsection (separate auxiliary load configuration).';
-			case 'label_daily_load':
-				return 'Alternate label for the daily load value displayed under Load.';
-			case 'label_daily_chrg':
-				return 'Alternate label for the daily charge value displayed under Battery.';
-			case 'label_daily_dischrg':
-				return 'Alternate label for the daily discharge value displayed under Battery.';
-			case 'label_autarky':
-				return 'Alternate label for the autarky value displayed under Inverter.';
-			case 'label_ratio':
-				return 'Alternat label for the ratio value displayed under Inverter.';
-			case 'navigate':
-				return 'Optional navigation path to open when the icon is clicked.';
-			case 'import_icon':
-				return 'Icon shown for the import flow. Can be set using a template sensor.';
-			case 'export_icon':
-				return 'Icon shown for the export flow. Can be set using a template sensor.';
-			case 'disconnected_icon':
-				return 'Icon shown when the grid is disconnected. Can be set using a template sensor.';
-			case 'aux_name':
-				return 'Aux group title shown in the UI.';
-			case 'aux_daily_name':
-				return 'Label used for daily Aux value.';
-			case 'aux_type':
-				return 'Icon shown for the Aux group.';
-			case 'invert_aux':
-				return 'Invert the direction of Aux flow arrows.';
-			case 'show_absolute_aux':
-				return 'Show Aux values as absolute (no sign) for clarity.';
-			case 'aux_dynamic_colour':
-				return 'Aux elements on the card will be greyed out if aux power is 0.';
-			case 'aux_colour':
-				return 'Primary colour for Aux flow.';
-			case 'aux_off_colour':
-				return 'Colour used when Aux path is off/idle.';
-			case 'show_daily_aux':
-				return 'Display daily Aux energy beneath the Aux section.';
-			case 'decimal_places':
-				return 'Number of decimal places for power values (0-3).';
-			case 'decimal_places_energy':
-				return 'Number of decimal places for energy values (0-3).';
-			case 'soc_decimal_places':
-				return 'Decimal places for State of Charge display (0-3).';
-			case 'dynamic_line_width':
-				return 'Animate line widths based on power level. Disable for a flatter look.';
-			case 'max_line_width': {
-				const min = Number(this._config?.min_line_width ?? 1);
-				const max = Number(this._config?.max_line_width ?? 1);
-				return min > max
-					? 'Warning: min_line_width is greater than max_line_width.'
-					: 'Maximum dynamic line width (1-8).';
-			}
-			case 'min_line_width': {
-				const min = Number(this._config?.min_line_width ?? 1);
-				const max = Number(this._config?.max_line_width ?? 1);
-				return min > max
-					? 'Warning: min_line_width is greater than max_line_width.'
-					: 'Minimum dynamic line width (1-8).';
-			}
-			case 'animation_speed':
-				return 'Adjusts the speed of flow animations. Higher = faster.';
-			case 'off_threshold':
-				return 'Below this power value the path is considered off/idle.';
-			case 'path_threshold':
-				return 'The colour of the path will change to the source colour if the percentage supply by a single source equals or exceeds this value.';
-			case 'max_power':
-				return 'Optional cap used for scaling and progress calculations.';
-			case 'title_size':
-				return "CSS font-size for title, e.g. '1.2em' or '18px'.";
-			case 'card_height':
-				return 'Card height: text value (e.g. 360) or an entity providing a numeric height.';
-			case 'card_width':
-				return 'Card width: text value (e.g. 640) or an entity providing a numeric width.';
-			case 'center_no_grid':
-				return 'When Grid is hidden, shift and narrow the view to center Solar/Battery/Loads.';
-			default:
-				return undefined;
+
+		// Static lookups (O(1))
+		if (name === 'max_line_width' || name === 'min_line_width') {
+			const min = Number(this._config?.min_line_width ?? 1);
+			const max = Number(this._config?.max_line_width ?? 1);
+			if (min > max)
+				return 'Warning: min_line_width is greater than max_line_width.';
+			return name === 'max_line_width'
+				? 'Maximum dynamic line width (1-8).'
+				: 'Minimum dynamic line width (1-8).';
 		}
+
+		return SunSynkCardEditor.HELP_TEXT[name];
 	};
 
 	// Humanize a schema name like "inverter_voltage_154" -> "Inverter Voltage 154"
 	private _prettyLabel(name: string): string {
-		return name.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+		const cached = SunSynkCardEditor._labelCache.get(name);
+		if (cached) return cached;
+		const result = name
+			.replace(/_/g, ' ')
+			.replace(/\b\w/g, (c) => c.toUpperCase());
+		SunSynkCardEditor._labelCache.set(name, result);
+		return result;
 	}
 
 	// Safe localize with fallback (treat 'unknown'/'undefined' as missing)
@@ -244,10 +283,10 @@ export class SunSynkCardEditor
 					return v;
 				}
 			}
-			return fallback;
 		} catch {
-			return fallback;
+			// fall through to fallback
 		}
+		return fallback;
 	}
 
 	// Map common CSS color names to hex; accept string, {r,g,b} object, or [r,g,b] array; return undefined if invalid
@@ -266,40 +305,19 @@ export class SunSynkCardEditor
 				g = v.g;
 				b = v.b;
 			}
-			const toNum = (x: unknown): number | undefined => {
-				if (typeof x === 'number' && Number.isFinite(x)) return x;
-				if (typeof x === 'string' && x.trim() !== '') {
-					const n = Number(x);
-					return Number.isFinite(n) ? n : undefined;
-				}
-				return undefined;
-			};
-			const rr = toNum(r);
-			const gg = toNum(g);
-			const bb = toNum(b);
+			const rr = SunSynkCardEditor._toFiniteNum(r);
+			const gg = SunSynkCardEditor._toFiniteNum(g);
+			const bb = SunSynkCardEditor._toFiniteNum(b);
 			if (rr === undefined || gg === undefined || bb === undefined)
 				return undefined;
-			const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
-			const toHex = (n: number) => clamp(n).toString(16).padStart(2, '0');
+			const toHex = (n: number) =>
+				SunSynkCardEditor._clamp255(n).toString(16).padStart(2, '0');
 			return `#${toHex(rr)}${toHex(gg)}${toHex(bb)}`;
 		}
 		if (typeof value !== 'string') return undefined;
 		const hex = value.trim();
-		const nameMap: Record<string, string> = {
-			grey: '#9e9e9e',
-			gray: '#9e9e9e',
-			pink: '#ffc0cb',
-			orange: '#ffa500',
-			red: '#ff0000',
-			green: '#008000',
-			blue: '#0000ff',
-			yellow: '#ffff00',
-			purple: '#800080',
-			black: '#000000',
-			white: '#ffffff',
-		};
 		const lower = hex.toLowerCase();
-		const fromMap = nameMap[lower];
+		const fromMap = SunSynkCardEditor.COLOR_NAME_MAP[lower];
 		let candidate = fromMap ?? hex;
 		// Expand #rgb shorthand to #rrggbb
 		const m = /^#([0-9a-f]{3})$/i.exec(candidate);
@@ -313,35 +331,33 @@ export class SunSynkCardEditor
 	// Convert supported inputs into [r, g, b] array for ha-form color_rgb
 	private _toRgb(value?: unknown): [number, number, number] | undefined {
 		if (value == null) return undefined;
-		const toChan = (x: unknown): number | undefined => {
-			if (typeof x === 'number' && Number.isFinite(x)) return x;
-			if (typeof x === 'string' && x.trim() !== '') {
-				const n = Number(x);
-				return Number.isFinite(n) ? n : undefined;
-			}
-			return undefined;
-		};
 
 		// Array [r,g,b]
 		if (Array.isArray(value) && value.length >= 3) {
 			const [r, g, b] = value as unknown[];
-			const rr = toChan(r);
-			const gg = toChan(g);
-			const bb = toChan(b);
+			const rr = SunSynkCardEditor._toFiniteNum(r);
+			const gg = SunSynkCardEditor._toFiniteNum(g);
+			const bb = SunSynkCardEditor._toFiniteNum(b);
 			if (rr == null || gg == null || bb == null) return undefined;
-			const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
-			return [clamp(rr), clamp(gg), clamp(bb)];
+			return [
+				SunSynkCardEditor._clamp255(rr),
+				SunSynkCardEditor._clamp255(gg),
+				SunSynkCardEditor._clamp255(bb),
+			];
 		}
 
 		// Object { r,g,b }
 		if (typeof value === 'object') {
 			const v = value as Record<string, unknown>;
-			const rr = toChan(v.r);
-			const gg = toChan(v.g);
-			const bb = toChan(v.b);
+			const rr = SunSynkCardEditor._toFiniteNum(v.r);
+			const gg = SunSynkCardEditor._toFiniteNum(v.g);
+			const bb = SunSynkCardEditor._toFiniteNum(v.b);
 			if (rr != null && gg != null && bb != null) {
-				const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
-				return [clamp(rr), clamp(gg), clamp(bb)];
+				return [
+					SunSynkCardEditor._clamp255(rr),
+					SunSynkCardEditor._clamp255(gg),
+					SunSynkCardEditor._clamp255(bb),
+				];
 			}
 		}
 
@@ -352,11 +368,11 @@ export class SunSynkCardEditor
 			const m =
 				/^rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/.exec(s);
 			if (m) {
-				const r = Number(m[1]);
-				const g = Number(m[2]);
-				const b = Number(m[3]);
-				const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
-				return [clamp(r), clamp(g), clamp(b)];
+				return [
+					SunSynkCardEditor._clamp255(Number(m[1])),
+					SunSynkCardEditor._clamp255(Number(m[2])),
+					SunSynkCardEditor._clamp255(Number(m[3])),
+				];
 			}
 			const hex = this._normalizeColor(s);
 			if (!hex) return undefined;
@@ -384,130 +400,112 @@ export class SunSynkCardEditor
 	}
 
 	// Safely extract a string value from an object by key
-	private _getStr(obj: unknown, key: string): string | undefined {
+	private static _getStr(obj: unknown, key: string): string | undefined {
 		if (!obj || typeof obj !== 'object') return undefined;
 		const val = (obj as Record<string, unknown>)[key];
 		return typeof val === 'string' ? val : undefined;
 	}
 
+	// Shared color normalization visitor - recursively converts colour values to hex strings
+	private _normalizeColorsInObject(obj: unknown): unknown {
+		if (Array.isArray(obj)) return obj;
+		if (!obj || typeof obj !== 'object') return obj;
+		const rec = obj as Record<string, unknown>;
+		for (const [k, val] of Object.entries(rec)) {
+			if (
+				typeof k === 'string' &&
+				SunSynkCardEditor.PATTERN_COLOUR_SUFFIX.test(k) &&
+				!SunSynkCardEditor.PATTERN_DYNAMIC_COLOUR_SUFFIX.test(k)
+			) {
+				rec[k] = this._normalizeColor(val) ?? undefined;
+			} else if (val && typeof val === 'object') {
+				rec[k] = this._normalizeColorsInObject(val) as unknown;
+			}
+		}
+		return rec;
+	}
+
+	// Helper to convert colour fields in a section to RGB format for ha-form
+	private _convertSectionColours(
+		section: Record<string, unknown> | undefined,
+		colourFields: string[],
+	): Record<string, unknown> | undefined {
+		if (!section) return undefined;
+		const result = { ...section };
+		for (const field of colourFields) {
+			result[field] = this._toRgb(section[field]) ?? undefined;
+		}
+		return result;
+	}
+
 	// Return a sanitized config so ha-form color_rgb selectors receive proper [r,g,b] values
 	private _sanitizedConfig(): sunsynkPowerFlowCardConfig {
+		// Return cached version if config hasn't changed
+		if (
+			this._cachedSanitizedConfig &&
+			this._lastCachedVersion === this._configVersion
+		) {
+			return this._cachedSanitizedConfig;
+		}
+
 		const c = this._config;
-		const copyBase = this._config as unknown as Record<string, unknown>;
-		const copy: Record<string, unknown> = { ...copyBase };
+		const copy: Record<string, unknown> = {
+			...(this._config as unknown as Record<string, unknown>),
+		};
+
 		// top-level title colour as RGB object
-		const titleColour = (c as unknown as Record<string, unknown>)[
-			'title_colour'
-		];
-		copy.title_colour = this._toRgb(titleColour) ?? undefined;
-		// inverter
-		if (c.inverter) {
-			copy.inverter = {
-				...c.inverter,
-				colour:
-					this._toRgb((c.inverter as Record<string, unknown>).colour) ??
-					undefined,
-			};
-		}
-		// solar
-		if (c.solar) {
-			copy.solar = {
-				...c.solar,
-				colour:
-					this._toRgb((c.solar as Record<string, unknown>).colour) ?? undefined,
-			};
-		}
-		// battery 1
-		if (c.battery) {
-			copy.battery = {
-				...c.battery,
-				colour:
-					this._toRgb((c.battery as Record<string, unknown>).colour) ??
-					undefined,
-				charge_colour:
-					this._toRgb((c.battery as Record<string, unknown>).charge_colour) ??
-					undefined,
-			};
-		}
-		// battery 2
-		if (c.battery2) {
-			copy.battery2 = {
-				...c.battery2,
-				colour:
-					this._toRgb((c.battery2 as Record<string, unknown>).colour) ??
-					undefined,
-				charge_colour:
-					this._toRgb((c.battery2 as Record<string, unknown>).charge_colour) ??
-					undefined,
-			};
-		}
-		// load
-		if (c.load) {
-			copy.load = {
-				...c.load,
-				colour:
-					this._toRgb((c.load as Record<string, unknown>).colour) ?? undefined,
-				off_colour:
-					this._toRgb((c.load as Record<string, unknown>).off_colour) ??
-					undefined,
-				max_colour:
-					this._toRgb((c.load as Record<string, unknown>).max_colour) ??
-					undefined,
-				aux_colour:
-					this._toRgb((c.load as Record<string, unknown>).aux_colour) ??
-					undefined,
-				aux_off_colour:
-					this._toRgb((c.load as Record<string, unknown>).aux_off_colour) ??
-					undefined,
-			};
-		}
-		// grid
-		if (c.grid) {
-			copy.grid = {
-				...c.grid,
-				colour:
-					this._toRgb((c.grid as Record<string, unknown>).colour) ?? undefined,
-				no_grid_colour:
-					this._toRgb((c.grid as Record<string, unknown>).no_grid_colour) ??
-					undefined,
-				export_colour:
-					this._toRgb((c.grid as Record<string, unknown>).export_colour) ??
-					undefined,
-				grid_off_colour:
-					this._toRgb((c.grid as Record<string, unknown>).grid_off_colour) ??
-					undefined,
-			};
-		}
-		return copy as unknown as sunsynkPowerFlowCardConfig;
+		copy.title_colour =
+			this._toRgb((c as unknown as Record<string, unknown>)['title_colour']) ??
+			undefined;
+
+		// Convert section colours to RGB format
+		copy.inverter = this._convertSectionColours(
+			c.inverter as Record<string, unknown>,
+			['colour'],
+		);
+		copy.solar = this._convertSectionColours(
+			c.solar as Record<string, unknown>,
+			['colour'],
+		);
+		copy.battery = this._convertSectionColours(
+			c.battery as Record<string, unknown>,
+			['colour', 'charge_colour'],
+		);
+		copy.battery2 = this._convertSectionColours(
+			c.battery2 as Record<string, unknown>,
+			['colour', 'charge_colour'],
+		);
+		copy.load = this._convertSectionColours(c.load as Record<string, unknown>, [
+			'colour',
+			'off_colour',
+			'max_colour',
+			'aux_colour',
+			'aux_off_colour',
+		]);
+		copy.grid = this._convertSectionColours(c.grid as Record<string, unknown>, [
+			'colour',
+			'no_grid_colour',
+			'export_colour',
+			'grid_off_colour',
+		]);
+
+		// Cache the result
+		this._cachedSanitizedConfig = copy as unknown as sunsynkPowerFlowCardConfig;
+		this._lastCachedVersion = this._configVersion;
+
+		return this._cachedSanitizedConfig;
 	}
 
 	public setConfig(config: sunsynkPowerFlowCardConfig): void {
 		// Migrate any existing *_colour arrays/objects in incoming config to hex strings
 		const clone = JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
-		const visit = (obj: unknown): unknown => {
-			if (Array.isArray(obj)) return obj;
-			if (!obj || typeof obj !== 'object') return obj;
-			const rec = obj as Record<string, unknown>;
-			for (const [k, val] of Object.entries(rec)) {
-				if (
-					typeof k === 'string' &&
-					/colour$/i.test(k) &&
-					!/dynamic_colour$/i.test(k)
-				) {
-					const hex = this._normalizeColor(val);
-					rec[k] = hex ?? undefined;
-				} else if (val && typeof val === 'object') {
-					rec[k] = visit(val) as unknown;
-				}
-			}
-			return rec;
-		};
-		visit(clone);
+		this._normalizeColorsInObject(clone);
 		this._config = {
 			...defaults,
 			...this._config,
 			...(clone as unknown as sunsynkPowerFlowCardConfig),
 		};
+		this._configVersion++;
 	}
 
 	protected render(): TemplateResult | void {
@@ -834,100 +832,129 @@ export class SunSynkCardEditor
 												},
 											],
 										},
-										{
-											type: 'expandable',
-											title: this._title('bat2'),
-											schema: [
-												{
-													name: 'battery2',
-													type: 'grid',
-													schema: [
-														{
-															name: 'energy',
-															selector: { number: { min: 0 } },
-														},
-														{
-															name: 'shutdown_soc',
-															selector: {
-																number: { mode: 'box', min: 0, max: 100 },
+										...(Number(this._config.battery?.count ?? 1) === 2
+											? [
+													{
+														type: 'expandable',
+														title: this._title('bat2'),
+														schema: [
+															{
+																name: 'battery2',
+																type: 'grid',
+																schema: [
+																	{
+																		name: 'energy',
+																		selector: { number: { min: 0 } },
+																	},
+																	{
+																		name: 'shutdown_soc',
+																		selector: {
+																			number: { mode: 'box', min: 0, max: 100 },
+																		},
+																	},
+																	{
+																		name: 'shutdown_soc_offgrid',
+																		selector: {
+																			number: { mode: 'box', min: 0, max: 100 },
+																		},
+																	},
+																	{
+																		name: 'soc_end_of_charge',
+																		selector: {
+																			number: {
+																				mode: 'box',
+																				min: 80,
+																				max: 100,
+																			},
+																		},
+																	},
+																	{
+																		name: 'soc_decimal_places',
+																		selector: { number: {} },
+																	},
+																	{
+																		name: 'auto_scale',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'invert_power',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'show_absolute',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'colour',
+																		selector: { color_rgb: {} },
+																	},
+																	{
+																		name: 'charge_colour',
+																		selector: { color_rgb: {} },
+																	},
+																	{
+																		name: 'dynamic_colour',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'linear_gradient',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'animate',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'hide_soc',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'show_remaining_energy',
+																		selector: { boolean: {} },
+																	},
+																	{
+																		name: 'remaining_energy_to_shutdown',
+																		selector: { boolean: {} },
+																	},
+																	{ name: 'navigate', selector: { text: {} } },
+																	{
+																		name: 'invert_flow',
+																		selector: { boolean: {} },
+																	},
+																],
 															},
-														},
-														{
-															name: 'shutdown_soc_offgrid',
-															selector: {
-																number: { mode: 'box', min: 0, max: 100 },
+															{
+																type: 'expandable',
+																title: this._title('sensor'),
+																schema: [
+																	{
+																		name: 'battery2',
+																		type: 'grid',
+																		schema: [
+																			{
+																				name: 'energy',
+																				selector: { entity: {} },
+																			},
+																			{
+																				name: 'shutdown_soc',
+																				selector: { entity: {} },
+																			},
+																			{
+																				name: 'shutdown_soc_offgrid',
+																				selector: { entity: {} },
+																			},
+																			{
+																				name: 'soc_end_of_charge',
+																				selector: { entity: {} },
+																			},
+																		],
+																	},
+																],
 															},
-														},
-														{
-															name: 'soc_end_of_charge',
-															selector: {
-																number: { mode: 'box', min: 80, max: 100 },
-															},
-														},
-														{
-															name: 'soc_decimal_places',
-															selector: { number: {} },
-														},
-														{ name: 'auto_scale', selector: { boolean: {} } },
-														{ name: 'invert_power', selector: { boolean: {} } },
-														{
-															name: 'show_absolute',
-															selector: { boolean: {} },
-														},
-														{ name: 'colour', selector: { color_rgb: {} } },
-														{
-															name: 'charge_colour',
-															selector: { color_rgb: {} },
-														},
-														{
-															name: 'dynamic_colour',
-															selector: { boolean: {} },
-														},
-														{
-															name: 'linear_gradient',
-															selector: { boolean: {} },
-														},
-														{ name: 'animate', selector: { boolean: {} } },
-														{ name: 'hide_soc', selector: { boolean: {} } },
-														{
-															name: 'show_remaining_energy',
-															selector: { boolean: {} },
-														},
-														{
-															name: 'remaining_energy_to_shutdown',
-															selector: { boolean: {} },
-														},
-														{ name: 'navigate', selector: { text: {} } },
-														{ name: 'invert_flow', selector: { boolean: {} } },
-													],
-												},
-												{
-													type: 'expandable',
-													title: this._title('sensor'),
-													schema: [
-														{
-															name: 'battery2',
-															type: 'grid',
-															schema: [
-																{ name: 'energy', selector: { entity: {} } },
-																{
-																	name: 'shutdown_soc',
-																	selector: { entity: {} },
-																},
-																{
-																	name: 'shutdown_soc_offgrid',
-																	selector: { entity: {} },
-																},
-																{
-																	name: 'soc_end_of_charge',
-																	selector: { entity: {} },
-																},
-															],
-														},
-													],
-												},
-											],
-										},
+														],
+													},
+												]
+											: []),
 									],
 								},
 							]
@@ -1456,66 +1483,79 @@ export class SunSynkCardEditor
 											},
 										],
 									},
-									{
-										type: 'expandable',
-										title: this._title('bat2'),
-										schema: [
-											{
-												name: 'entities',
-												type: 'grid',
-												schema: [
-													{
-														name: 'battery2_power_190',
-														selector: {
-															entity: { device_class: SensorDeviceClass.POWER },
+									...(Number(this._config.battery?.count ?? 1) === 2
+										? [
+												{
+													type: 'expandable',
+													title: this._title('bat2'),
+													schema: [
+														{
+															name: 'entities',
+															type: 'grid',
+															schema: [
+																{
+																	name: 'battery2_power_190',
+																	selector: {
+																		entity: {
+																			device_class: SensorDeviceClass.POWER,
+																		},
+																	},
+																},
+																{
+																	name: 'battery2_current_191',
+																	selector: {
+																		entity: {
+																			device_class: SensorDeviceClass.CURRENT,
+																		},
+																	},
+																},
+																{
+																	name: 'battery2_temp_182',
+																	selector: {
+																		entity: {
+																			device_class:
+																				SensorDeviceClass.TEMPERATURE,
+																		},
+																	},
+																},
+																{
+																	name: 'battery2_voltage_183',
+																	selector: {
+																		entity: {
+																			device_class: SensorDeviceClass.VOLTAGE,
+																		},
+																	},
+																},
+																{
+																	name: 'battery2_soc_184',
+																	selector: {
+																		entity: {
+																			device_class: SensorDeviceClass.BATTERY,
+																		},
+																	},
+																},
+																{
+																	name: 'battery2_rated_capacity',
+																	selector: { entity: {} },
+																},
+																{
+																	name: 'battery2_soh',
+																	selector: { entity: {} },
+																},
+																{
+																	name: 'battery2_current_direction',
+																	selector: { entity: {} },
+																},
+																{
+																	name: 'battery2_status',
+																	selector: { entity: {} },
+																},
+															],
 														},
-													},
-													{
-														name: 'battery2_current_191',
-														selector: {
-															entity: {
-																device_class: SensorDeviceClass.CURRENT,
-															},
-														},
-													},
-													{
-														name: 'battery2_temp_182',
-														selector: {
-															entity: {
-																device_class: SensorDeviceClass.TEMPERATURE,
-															},
-														},
-													},
-													{
-														name: 'battery2_voltage_183',
-														selector: {
-															entity: {
-																device_class: SensorDeviceClass.VOLTAGE,
-															},
-														},
-													},
-													{
-														name: 'battery2_soc_184',
-														selector: {
-															entity: {
-																device_class: SensorDeviceClass.BATTERY,
-															},
-														},
-													},
-													{
-														name: 'battery2_rated_capacity',
-														selector: { entity: {} },
-													},
-													{ name: 'battery2_soh', selector: { entity: {} } },
-													{
-														name: 'battery2_current_direction',
-														selector: { entity: {} },
-													},
-													{ name: 'battery2_status', selector: { entity: {} } },
-												],
-											},
-										],
-									},
+													],
+												},
+											]
+										: []),
 								],
 							},
 							{
@@ -1868,12 +1908,20 @@ export class SunSynkCardEditor
 
 	private _emitConfig(config: sunsynkPowerFlowCardConfig): void {
 		this._config = config;
+		this._configVersion++;
+		// Clear cache when config changes
+		this._cachedSanitizedConfig = undefined;
+		this._lastCachedVersion = -1;
 		fireEvent(this, 'config-changed', { config });
 	}
 
 	// (header reset actions removed)
 
-	// (header reset actions removed)
+	private _withSuffix(base: string, condition: boolean): string {
+		const key = condition ? 'config.inline.shown' : 'config.inline.hidden';
+		const fallback = condition ? 'shown' : 'hidden';
+		return `${base} (${this._t(key, fallback)})`;
+	}
 
 	private _computeLabelCallback = (data: {
 		name?: string;
@@ -1889,44 +1937,25 @@ export class SunSynkCardEditor
 		// Base label from i18n with graceful fallback
 		const base = this._t(`config.${name}`, this._prettyLabel(name));
 
-		// Inline, stateful suffixes for better clarity on boolean/conditional options
-		const t = (k: string, d: string) => this._t(k, d);
 		const cfg = this._config as unknown as Record<string, unknown>;
 		switch (name) {
-			case 'show_solar': {
-				const on = Boolean(cfg.show_solar);
-				const suffix = on
-					? t('config.inline.shown', 'shown')
-					: t('config.inline.hidden', 'hidden');
-				return `${base} (${suffix})`;
-			}
-			case 'show_battery': {
-				const on = Boolean(cfg.show_battery);
-				const suffix = on
-					? t('config.inline.shown', 'shown')
-					: t('config.inline.hidden', 'hidden');
-				return `${base} (${suffix})`;
-			}
-			case 'show_grid': {
-				const on = Boolean(cfg.show_grid);
-				const suffix = on
-					? t('config.inline.shown', 'shown')
-					: t('config.inline.hidden', 'hidden');
-				return `${base} (${suffix})`;
-			}
+			case 'show_solar':
+				return this._withSuffix(base, Boolean(cfg.show_solar));
+			case 'show_battery':
+				return this._withSuffix(base, Boolean(cfg.show_battery));
+			case 'show_grid':
+				return this._withSuffix(base, Boolean(cfg.show_grid));
 			case 'dynamic_line_width': {
 				const on = Boolean(cfg.dynamic_line_width);
 				if (!on) {
-					const dis = t('config.inline.disabled', 'disabled');
-					return `${base} (${dis})`;
+					return `${base} (${this._t('config.inline.disabled', 'disabled')})`;
 				}
 				const max = cfg.max_line_width as number | undefined;
 				const min = cfg.min_line_width as number | undefined;
 				if (typeof max === 'number' && typeof min === 'number') {
 					return `${base} (min ${min} – max ${max})`;
 				}
-				const en = t('config.inline.enabled', 'enabled');
-				return `${base} (${en})`;
+				return `${base} (${this._t('config.inline.enabled', 'enabled')})`;
 			}
 			case 'three_phase': {
 				const on = Boolean(
@@ -1951,69 +1980,33 @@ export class SunSynkCardEditor
 		const v = ev.detail.value as Record<string, unknown>;
 		// IMPORTANT: do NOT mutate v (the form's live value). Clone before normalization to avoid breaking the picker UI.
 		const out = JSON.parse(JSON.stringify(v)) as Record<string, unknown>;
-		const visit = (obj: unknown): unknown => {
-			if (Array.isArray(obj)) return obj; // leave non-colour arrays untouched at this level
-			if (!obj || typeof obj !== 'object') return obj;
-			const rec = obj as Record<string, unknown>;
-			for (const [k, val] of Object.entries(rec)) {
-				if (
-					typeof k === 'string' &&
-					/colour$/i.test(k) &&
-					!/dynamic_colour$/i.test(k)
-				) {
-					const hex = this._normalizeColor(val);
-					rec[k] = hex ?? undefined;
-				} else if (val && typeof val === 'object') {
-					rec[k] = visit(val) as unknown;
-				}
-			}
-			return rec;
-		};
-		visit(out);
+		this._normalizeColorsInObject(out);
 
 		// Normalize dynamic line width values if present
-		const clampInt = (
-			n: unknown,
-			min: number,
-			max: number,
-		): number | undefined => {
-			if (typeof n === 'number' && Number.isFinite(n))
-				return Math.max(min, Math.min(max, Math.round(n)));
-			if (typeof n === 'string' && n.trim() !== '') {
-				const m = Number(n);
-				if (Number.isFinite(m))
-					return Math.max(min, Math.min(max, Math.round(m)));
-			}
-			return undefined;
-		};
-		if (
-			out &&
-			typeof out === 'object' &&
-			(out as Record<string, unknown>).dynamic_line_width
-		) {
-			const max = clampInt(
-				(out as Record<string, unknown>).max_line_width,
-				1,
-				8,
-			);
-			const min = clampInt(
-				(out as Record<string, unknown>).min_line_width,
-				1,
-				8,
-			);
-			if (max !== undefined)
-				(out as Record<string, unknown>).max_line_width = max;
-			if (min !== undefined)
-				(out as Record<string, unknown>).min_line_width = min;
-			const curMax = (out as Record<string, number | undefined>).max_line_width;
-			const curMin = (out as Record<string, number | undefined>).min_line_width;
+		if (out && typeof out === 'object' && out.dynamic_line_width) {
+			const clampInt = (
+				n: unknown,
+				min: number,
+				max: number,
+			): number | undefined => {
+				const num = SunSynkCardEditor._toFiniteNum(n);
+				if (num !== undefined)
+					return Math.max(min, Math.min(max, Math.round(num)));
+				return undefined;
+			};
+			const max = clampInt(out.max_line_width, 1, 8);
+			const min = clampInt(out.min_line_width, 1, 8);
+			if (max !== undefined) out.max_line_width = max;
+			if (min !== undefined) out.min_line_width = min;
+			const curMax = out.max_line_width as number | undefined;
+			const curMin = out.min_line_width as number | undefined;
 			if (
 				typeof curMin === 'number' &&
 				typeof curMax === 'number' &&
 				curMin > curMax
 			) {
 				// If swapped, align min to max to keep consistent
-				(out as Record<string, number>).min_line_width = curMax;
+				out.min_line_width = curMax;
 			}
 		}
 		// Update local config and emit cloned hex-normalized config; this keeps the form's RGB value intact
